@@ -66,9 +66,10 @@ html, body, #root {
 .toggle-btn.active { background: var(--yellow); color: var(--navy); border: 2px solid var(--navy); box-shadow: 2px 2px 0 var(--navy); transform: scale(1.05); }
 
 /* Share Banner */
-.share-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--yellow); border-bottom: var(--border-thick); }
-.share-label { font-size: 14px; font-weight: 700; color: var(--navy); text-transform: uppercase; }
-.share-code { font-family: 'Righteous', cursive; font-size: 20px; color: var(--navy); flex: 1; letter-spacing: 2px; text-shadow: 1px 1px 0 var(--cream); }
+.share-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; background: var(--yellow); border-bottom: var(--border-thick); }
+.share-info { display: flex; flex-direction: column; flex: 1; justify-content: center; }
+.share-label { font-size: 11px; font-weight: 700; color: var(--navy); text-transform: uppercase; line-height: 1; margin-bottom: 4px; opacity: 0.8; letter-spacing: 0.5px; }
+.share-code { font-family: 'Righteous', cursive; font-size: 24px; color: var(--navy); letter-spacing: 2px; text-shadow: 1px 1px 0 var(--cream); line-height: 1; }
 .share-copy { background: var(--cream); border: var(--border-thin); border-radius: var(--radius-sm); padding: 6px 12px; color: var(--navy); font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.2s; font-family: 'Righteous', cursive; text-transform: uppercase; box-shadow: 2px 2px 0 var(--navy); }
 .share-copy:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--navy); }
 .share-copy:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--navy); }

@@ -80,8 +80,10 @@ export default function App() {
           {/* Share code banner */}
           {role === "keeper" && (
             <div className="share-banner">
-              <span className="share-label">Share code</span>
-              <span className="share-code">{game.code}</span>
+              <div className="share-info">
+                <span className="share-label">Share code</span>
+                <span className="share-code">{game.code}</span>
+              </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   className="share-copy"
