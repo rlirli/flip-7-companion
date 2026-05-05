@@ -1,6 +1,7 @@
 // src/components/EntryView.tsx
 import { useState, useEffect } from "react";
 import type { Player, Round } from "../types";
+import { WINNING_SCORE } from "../constants";
 
 interface EntryViewProps {
   players: Player[];
@@ -67,16 +68,21 @@ export function EntryView({
     <div className="game-screen">
       {/* Mini leaderboard strip */}
       <div className="leaderboard-strip">
-        {sortedPlayers.map((p, i) => (
-          <div key={p.id} className={`leader-card rank-${i + 1}`}>
-            <div className="leader-rank">#{i + 1}</div>
-            <div className="leader-name">{p.name}</div>
-            <div className="leader-score">{totalScores[p.id] ?? 0}</div>
-            {hasWip && (parseInt(localWip[p.id] ?? "") || 0) !== 0 && (
-              <div className="leader-score-wip">→ {wipTotals[p.id]}</div>
-            )}
-          </div>
-        ))}
+        {sortedPlayers.map((p, i) => {
+          const locked = totalScores[p.id] ?? 0;
+          const wip = parseInt(localWip[p.id] ?? "") || 0;
+          const projected = wipTotals[p.id] ?? locked;
+          return (
+            <div key={p.id} className={`leader-card rank-${i + 1}${projected >= WINNING_SCORE ? ' near-win' : ''}`}>
+              <div className="leader-rank">#{i + 1}</div>
+              <div className="leader-name">{p.name}</div>
+              <div className="leader-score">{locked}</div>
+              {hasWip && wip !== 0 && (
+                <div className="leader-score-wip">→ {projected}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Round entry */}
@@ -97,7 +103,7 @@ export function EntryView({
             const hasThisWip =
               localWip[p.id] !== "" && localWip[p.id] !== undefined;
             return (
-              <div key={p.id} className="entry-row">
+              <div key={p.id} className={`entry-row${projected >= WINNING_SCORE ? ' near-win' : ''}`}>
                 <div className="entry-left">
                   <div className="entry-player-name">{p.name}</div>
                   <div className="entry-sub">

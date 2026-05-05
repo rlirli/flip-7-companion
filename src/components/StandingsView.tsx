@@ -1,5 +1,6 @@
 
 import type { Player } from "../types";
+import { WINNING_SCORE } from "../constants";
 
 interface StandingsViewProps {
   sortedPlayers: Player[];
@@ -23,7 +24,7 @@ export function StandingsView({
         const wip = parseInt(localWip[p.id] ?? "") || 0;
         const projected = wipTotals[p.id] ?? locked;
         return (
-          <div key={p.id} className={`lb-row${i === 0 ? " lb-top" : ""}`}>
+          <div key={p.id} className={`lb-row${projected >= WINNING_SCORE ? " near-win" : ""}`}>
             <div className={`lb-rank-num${i === 0 ? " gold" : ""}`}>
               {i === 0 ? "♛" : `#${i + 1}`}
             </div>
