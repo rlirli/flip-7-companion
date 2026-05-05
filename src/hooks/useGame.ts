@@ -40,6 +40,9 @@ export function useGame(): UseGameReturn {
   // Track when a field was last edited locally to prevent DB echoes from clobbering active typing
   const lastEdited = useRef<Record<string, number>>({});
 
+  const gameRef = useRef(game);
+  useEffect(() => { gameRef.current = game; }, [game]);
+
   const updateUrlCode = useCallback((code: string | null) => {
     const url = new URL(window.location.href);
     if (code) {
@@ -230,20 +233,39 @@ export function useGame(): UseGameReturn {
     lastEdited.current = {};
   }, [game, localWip]);
 
+  const roundsDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRoundEdits = useRef<Record<string, Record<string, number>>>({});
+
   const editRoundScore = useCallback(
-    async (roundId: string, playerId: string, value: number) => {
-      if (!game) return;
-      const updatedRounds = game.rounds.map((r) =>
-        r.id === roundId
-          ? { ...r, scores: { ...r.scores, [playerId]: value } }
-          : r
-      );
-      await supabase
-        .from("games")
-        .update({ rounds: updatedRounds })
-        .eq("id", game.id);
+    (roundId: string, playerId: string, value: number) => {
+      if (!pendingRoundEdits.current[roundId]) {
+        pendingRoundEdits.current[roundId] = {};
+      }
+      pendingRoundEdits.current[roundId][playerId] = value;
+      
+      if (roundsDebounce.current) clearTimeout(roundsDebounce.current);
+      roundsDebounce.current = setTimeout(() => {
+        const currentGame = gameRef.current;
+        if (!currentGame) return;
+        
+        const updatedRounds = currentGame.rounds.map((r) => {
+          const edits = pendingRoundEdits.current[r.id];
+          if (edits) {
+            return { ...r, scores: { ...r.scores, ...edits } };
+          }
+          return r;
+        });
+        
+        pendingRoundEdits.current = {};
+        
+        supabase
+          .from("games")
+          .update({ rounds: updatedRounds })
+          .eq("id", currentGame.id)
+          .then();
+      }, 400);
     },
-    [game]
+    []
   );
 
   const leaveGame = useCallback(() => {

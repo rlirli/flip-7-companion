@@ -1,4 +1,5 @@
 // src/components/EntryView.tsx
+import { useState, useEffect } from "react";
 import type { Player, Round } from "../types";
 
 interface EntryViewProps {
@@ -15,6 +16,34 @@ interface EntryViewProps {
   onLockRound: () => void;
   onEditRoundScore: (roundId: string, pid: string, val: number) => void;
   onNewGame: () => void;
+}
+
+function DebouncedScoreInput({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (val: number) => void;
+}) {
+  const [localVal, setLocalVal] = useState(value);
+
+  useEffect(() => {
+    setLocalVal(value);
+  }, [value]);
+
+  return (
+    <input
+      type="number"
+      className="editable-score"
+      value={localVal}
+      onChange={(e) => {
+        const val = parseInt(e.target.value) || 0;
+        setLocalVal(val);
+        onChange(val);
+      }}
+      inputMode="numeric"
+    />
+  );
 }
 
 export function EntryView({
@@ -143,18 +172,9 @@ export function EntryView({
                 {players.map((p) => (
                   <div key={p.id} className="history-cell">
                     {isKeeper ? (
-                      <input
-                        type="number"
-                        className="editable-score"
+                      <DebouncedScoreInput
                         value={round.scores[p.id] ?? 0}
-                        onChange={(e) =>
-                          onEditRoundScore(
-                            round.id,
-                            p.id,
-                            parseInt(e.target.value) || 0
-                          )
-                        }
-                        inputMode="numeric"
+                        onChange={(val) => onEditRoundScore(round.id, p.id, val)}
                       />
                     ) : (
                       <span>{round.scores[p.id] ?? 0}</span>
