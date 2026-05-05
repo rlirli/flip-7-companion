@@ -26,7 +26,7 @@ export function StandingsView({
         return (
           <div key={p.id} className={`lb-row${projected >= WINNING_SCORE ? " near-win" : ""}`}>
             <div className={`lb-rank-num${i === 0 ? " gold" : ""}`}>
-              {i === 0 ? "♛" : `#${i + 1}`}
+              {i === 0 ? "🏆" : `#${i + 1}`}
             </div>
             <div className="lb-player-name">{p.name}</div>
             <div className="lb-scores">

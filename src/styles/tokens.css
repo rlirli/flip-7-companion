@@ -118,8 +118,9 @@ html, body, #root {
 /* Leaderboard Full (Standings View) */
 .leaderboard-full { padding: 20px 16px 0; display: flex; flex-direction: column; gap: 14px; }
 .lb-row { background: var(--cream); border: var(--border-thick); border-radius: var(--radius); padding: 16px 20px; display: flex; align-items: center; gap: 16px; box-shadow: var(--card-shadow); position: relative; overflow: hidden; }
-.lb-rank-num { font-family: var(--font-heading); font-size: 24px; color: var(--teal); width: 32px; flex-shrink: 0; text-align: center; text-shadow: 1px 1px 0 var(--navy); }
-.lb-rank-num.gold { color: var(--red); text-shadow: 2px 2px 0 var(--navy); font-size: 32px; transform: rotate(-5deg); }
+.lb-rank-num { font-family: var(--font-heading); font-size: 24px; color: var(--teal); width: 32px; flex-shrink: 0; text-align: center; }
+.lb-rank-num.gold { color: var(--red); font-size: 32px; transform: rotate(-5deg); }
+.near-win .lb-rank-num  { color: var(--navy) }
 .lb-player-name { flex: 1; font-size: 22px; font-weight: 700; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
 .lb-scores { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
 .lb-locked-score { font-family: var(--font-heading); font-size: 36px; color: var(--navy); line-height: 1; text-shadow: 2px 2px 0px rgba(0,0,0,0.1); }
