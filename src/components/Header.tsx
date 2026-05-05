@@ -18,7 +18,6 @@ export function Header({ phase, view, roundNumber, onViewChange, onHomeClick }: 
         style={onHomeClick ? { cursor: 'pointer' } : undefined}
       >
         <span className="logo-text">Flip 7</span>
-        <span className="logo-badge">Score</span>
       </div>
       <div className="header-right">
         {phase === "game" && (
