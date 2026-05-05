@@ -1,5 +1,5 @@
 // src/components/EntryView.tsx
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { Player, Round } from "../types";
 import { WINNING_SCORE } from "../constants";
 
@@ -27,10 +27,12 @@ function DebouncedScoreInput({
   onChange: (val: number) => void;
 }) {
   const [localVal, setLocalVal] = useState(value);
+  const [prevValue, setPrevValue] = useState(value);
 
-  useEffect(() => {
+  if (value !== prevValue) {
+    setPrevValue(value);
     setLocalVal(value);
-  }, [value]);
+  }
 
   return (
     <input

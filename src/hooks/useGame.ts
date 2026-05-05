@@ -22,7 +22,7 @@ interface UseGameReturn {
   joinGame: (code: string) => Promise<boolean>;
   setWip: (playerId: string, value: string) => void;
   lockRound: () => Promise<void>;
-  editRoundScore: (roundId: string, playerId: string, value: number) => Promise<void>;
+  editRoundScore: (roundId: string, playerId: string, value: number) => void;
   leaveGame: () => void;
   resetGame: () => Promise<void>;
 }
@@ -31,7 +31,13 @@ export function useGame(): UseGameReturn {
   const [game, setGame] = useState<Game | null>(null);
   const [role, setRole] = useState<Role>("viewer");
   const [isJoiner, setIsJoiner] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== "undefined") {
+      const code = new URLSearchParams(window.location.search).get("code");
+      return !!code;
+    }
+    return false;
+  });
   const [error, setError] = useState<string | null>(null);
   
   // Local WIP mirror
@@ -51,18 +57,6 @@ export function useGame(): UseGameReturn {
       url.searchParams.delete("code");
     }
     window.history.replaceState({}, "", url.toString());
-  }, []);
-
-  // Auto-join if URL has code
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    if (code) {
-      // We don't want to show an error immediately if the auto-join fails, 
-      // but joinGame handles its own state
-      joinGame(code);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Derived values
@@ -155,31 +149,39 @@ export function useGame(): UseGameReturn {
     } finally {
       setLoading(false);
     }
+  }, [updateUrlCode]);
+
+  const fetchGameFromDb = useCallback(async (code: string) => {
+    const { data, error: err } = await supabase
+      .from("games")
+      .select()
+      .eq("code", code.toUpperCase().trim())
+      .single();
+    if (err || !data) throw err ?? new Error("Game not found");
+    return data as Game;
   }, []);
+
+  const handleJoinSuccess = useCallback((joinedGame: Game) => {
+    setGame(joinedGame);
+    // We allow everyone who joins to be a keeper for now
+    // TODO: Viewer-only invites later on
+    setRole("keeper");
+    setIsJoiner(true);
+    setLocalWip(
+      Object.fromEntries(
+        Object.entries(joinedGame.wip_scores ?? {}).map(([k, v]) => [k, String(v)])
+      )
+    );
+    lastEdited.current = {};
+    updateUrlCode(joinedGame.code);
+  }, [updateUrlCode]);
 
   const joinGame = useCallback(async (code: string) => {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: err } = await supabase
-        .from("games")
-        .select()
-        .eq("code", code.toUpperCase().trim())
-        .single();
-      if (err || !data) throw err ?? new Error("Game not found");
-      const joinedGame = data as Game;
-      setGame(joinedGame);
-      // We allow everyone who joins to be a keeper for now
-      // TODO: Viewer-only invites later on
-      setRole("keeper");
-      setIsJoiner(true);
-      setLocalWip(
-        Object.fromEntries(
-          Object.entries(joinedGame.wip_scores ?? {}).map(([k, v]) => [k, String(v)])
-        )
-      );
-      lastEdited.current = {};
-      updateUrlCode(joinedGame.code);
+      const joinedGame = await fetchGameFromDb(code);
+      handleJoinSuccess(joinedGame);
       return true;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Game not found");
@@ -187,7 +189,36 @@ export function useGame(): UseGameReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchGameFromDb, handleJoinSuccess]);
+
+  // Auto-join if URL has code
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (!code) return;
+
+    let ignore = false;
+    
+    const autoJoin = async () => {
+      try {
+        const joinedGame = await fetchGameFromDb(code);
+        if (!ignore) {
+          handleJoinSuccess(joinedGame);
+        }
+      } catch (e: unknown) {
+        if (!ignore) {
+          setError(e instanceof Error ? e.message : "Game not found");
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    };
+
+    autoJoin();
+    return () => { ignore = true; };
+  }, [fetchGameFromDb, handleJoinSuccess]);
 
   const pushWipToDb = useCallback(
     async (wip: Record<string, string>) => {
