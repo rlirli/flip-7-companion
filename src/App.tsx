@@ -10,26 +10,25 @@ import type { ViewMode } from "./types";
 
 export default function App() {
   const {
-    game, role, loading, error,
+    game, role, isJoiner, loading, error, localWip,
     totalScores, wipTotals, sortedPlayers, hasWip,
     createGame, joinGame, setWip, lockRound, editRoundScore, resetGame,
   } = useGame();
 
-  const [view, setView] = useState<ViewMode>("entry");
+  const [view, setView] = useState<ViewMode | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
-  // Viewers default to standings
-  const effectiveView = role === "viewer" ? (view === "entry" ? "score" : view) : view;
+  // Default view: Joiners see standings first, Creators see entry first. 
+  // Future viewers are locked to standings unless they change it (if permitted).
+  let effectiveView: ViewMode = view ?? (isJoiner ? "score" : "entry");
+  if (role === "viewer" && effectiveView === "entry") {
+    effectiveView = "score";
+  }
 
   const phase = game ? "game" : "setup";
 
-  // localWip is managed inside useGame but we need to expose it to components
-  // We derive it from game.wip_scores for display (the hook handles the local mirror)
-  const displayWip = game
-    ? Object.fromEntries(
-        Object.entries(game.wip_scores ?? {}).map(([k, v]) => [k, String(v)])
-      )
-    : {};
+  // Use the fast local mirror for immediate keystroke feedback
+  const displayWip = localWip;
 
   return (
     <>

@@ -8,8 +8,10 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 interface UseGameReturn {
   game: Game | null;
   role: Role;
+  isJoiner: boolean;
   loading: boolean;
   error: string | null;
+  localWip: Record<string, string>;
   // derived
   totalScores: Record<string, number>;
   wipTotals: Record<string, number>;
@@ -27,11 +29,15 @@ interface UseGameReturn {
 export function useGame(): UseGameReturn {
   const [game, setGame] = useState<Game | null>(null);
   const [role, setRole] = useState<Role>("viewer");
+  const [isJoiner, setIsJoiner] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Local WIP mirror — we write to DB debounced, show local immediately
+  
+  // Local WIP mirror
   const [localWip, setLocalWip] = useState<Record<string, string>>({});
   const wipDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track when a field was last edited locally to prevent DB echoes from clobbering active typing
+  const lastEdited = useRef<Record<string, number>>({});
 
   // Derived values
   const totalScores: Record<string, number> = {};
@@ -51,6 +57,7 @@ export function useGame(): UseGameReturn {
   const hasWip = Object.values(localWip).some(
     (v) => v !== "" && v !== undefined
   );
+  
   const sortedPlayers = game
     ? [...game.players].sort((a, b) => wipTotals[b.id] - wipTotals[a.id])
     : [];
@@ -73,16 +80,20 @@ export function useGame(): UseGameReturn {
         (payload) => {
           const updated = payload.new as Game;
           setGame(updated);
-          // Merge remote wip into local only for other players' entries
-          // (don't clobber what the keeper is currently typing)
+          
+          // Smart merge: Update localWip from the DB, EXCEPT for fields the user is actively typing.
+          // If the user typed in a field within the last 1500ms, we assume this DB update
+          // is either an echo of their own typing, or a conflicting edit that we should ignore
+          // for a moment so their cursor doesn't jump.
           setLocalWip((prev) => {
-            const merged: Record<string, string> = {};
-            for (const pid of Object.keys(updated.wip_scores ?? {})) {
-              // Keep local value if keeper is actively editing this player
-              merged[pid] =
-                prev[pid] !== undefined
-                  ? prev[pid]
-                  : String(updated.wip_scores[pid] ?? "");
+            const merged: Record<string, string> = { ...prev };
+            const now = Date.now();
+            for (const p of updated.players) {
+              const isActivelyEditing = now - (lastEdited.current[p.id] || 0) < 1500;
+              if (!isActivelyEditing) {
+                const remoteVal = updated.wip_scores?.[p.id];
+                merged[p.id] = remoteVal !== undefined && remoteVal !== null ? String(remoteVal) : "";
+              }
             }
             return merged;
           });
@@ -107,7 +118,9 @@ export function useGame(): UseGameReturn {
       if (err) throw err;
       setGame(data as Game);
       setRole("keeper");
+      setIsJoiner(false);
       setLocalWip({});
+      lastEdited.current = {};
       return (data as Game).code;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create game");
@@ -127,16 +140,18 @@ export function useGame(): UseGameReturn {
         .eq("code", code.toUpperCase().trim())
         .single();
       if (err || !data) throw err ?? new Error("Game not found");
-      setGame(data as Game);
-      setRole("viewer");
+      const joinedGame = data as Game;
+      setGame(joinedGame);
+      // We allow everyone who joins to be a keeper for now
+      // TODO: Viewer-only invites later on
+      setRole("keeper");
+      setIsJoiner(true);
       setLocalWip(
         Object.fromEntries(
-          Object.entries((data as Game).wip_scores ?? {}).map(([k, v]) => [
-            k,
-            String(v),
-          ])
+          Object.entries(joinedGame.wip_scores ?? {}).map(([k, v]) => [k, String(v)])
         )
       );
+      lastEdited.current = {};
       return true;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Game not found");
@@ -162,6 +177,7 @@ export function useGame(): UseGameReturn {
 
   const setWip = useCallback(
     (playerId: string, value: string) => {
+      lastEdited.current[playerId] = Date.now();
       setLocalWip((prev) => {
         const next = { ...prev, [playerId]: value };
         // Debounce DB write by 400ms so we don't hammer on every keystroke
@@ -186,6 +202,7 @@ export function useGame(): UseGameReturn {
       .update({ rounds: updatedRounds, wip_scores: {} })
       .eq("id", game.id);
     setLocalWip({});
+    lastEdited.current = {};
   }, [game, localWip]);
 
   const editRoundScore = useCallback(
@@ -207,15 +224,19 @@ export function useGame(): UseGameReturn {
   const resetGame = useCallback(() => {
     setGame(null);
     setRole("viewer");
+    setIsJoiner(false);
     setLocalWip({});
+    lastEdited.current = {};
     setError(null);
   }, []);
 
   return {
     game,
     role,
+    isJoiner,
     loading,
     error,
+    localWip,
     totalScores,
     wipTotals,
     sortedPlayers,
