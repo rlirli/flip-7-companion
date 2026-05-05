@@ -6,12 +6,17 @@ interface HeaderProps {
   view: ViewMode;
   roundNumber: number;
   onViewChange: (v: ViewMode) => void;
+  onHomeClick?: () => void;
 }
 
-export function Header({ phase, view, roundNumber, onViewChange }: HeaderProps) {
+export function Header({ phase, view, roundNumber, onViewChange, onHomeClick }: HeaderProps) {
   return (
     <header className="header">
-      <div className="logo">
+      <div 
+        className="logo" 
+        onClick={onHomeClick}
+        style={onHomeClick ? { cursor: 'pointer' } : undefined}
+      >
         <span className="logo-text">Flip 7</span>
         <span className="logo-badge">Score</span>
       </div>

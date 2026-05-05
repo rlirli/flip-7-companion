@@ -23,7 +23,8 @@ interface UseGameReturn {
   setWip: (playerId: string, value: string) => void;
   lockRound: () => Promise<void>;
   editRoundScore: (roundId: string, playerId: string, value: number) => Promise<void>;
-  resetGame: () => void;
+  leaveGame: () => void;
+  resetGame: () => Promise<void>;
 }
 
 export function useGame(): UseGameReturn {
@@ -38,6 +39,28 @@ export function useGame(): UseGameReturn {
   const wipDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Track when a field was last edited locally to prevent DB echoes from clobbering active typing
   const lastEdited = useRef<Record<string, number>>({});
+
+  const updateUrlCode = useCallback((code: string | null) => {
+    const url = new URL(window.location.href);
+    if (code) {
+      url.searchParams.set("code", code);
+    } else {
+      url.searchParams.delete("code");
+    }
+    window.history.replaceState({}, "", url.toString());
+  }, []);
+
+  // Auto-join if URL has code
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) {
+      // We don't want to show an error immediately if the auto-join fails, 
+      // but joinGame handles its own state
+      joinGame(code);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Derived values
   const totalScores: Record<string, number> = {};
@@ -121,6 +144,7 @@ export function useGame(): UseGameReturn {
       setIsJoiner(false);
       setLocalWip({});
       lastEdited.current = {};
+      updateUrlCode((data as Game).code);
       return (data as Game).code;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create game");
@@ -152,6 +176,7 @@ export function useGame(): UseGameReturn {
         )
       );
       lastEdited.current = {};
+      updateUrlCode(joinedGame.code);
       return true;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Game not found");
@@ -221,14 +246,23 @@ export function useGame(): UseGameReturn {
     [game]
   );
 
-  const resetGame = useCallback(() => {
+  const leaveGame = useCallback(() => {
     setGame(null);
     setRole("viewer");
     setIsJoiner(false);
     setLocalWip({});
     lastEdited.current = {};
     setError(null);
-  }, []);
+    updateUrlCode(null);
+  }, [updateUrlCode]);
+
+  const resetGame = useCallback(async () => {
+    if (!game) return;
+    await supabase
+      .from("games")
+      .update({ rounds: [], wip_scores: {} })
+      .eq("id", game.id);
+  }, [game]);
 
   return {
     game,
@@ -246,6 +280,7 @@ export function useGame(): UseGameReturn {
     setWip,
     lockRound,
     editRoundScore,
+    leaveGame,
     resetGame,
   };
 }
