@@ -7,11 +7,12 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 interface SetupProps {
   loading: boolean;
   error: string | null;
+  supabaseAvailable: boolean;
   onCreateGame: (players: Player[]) => void;
   onJoinGame: (code: string) => void;
 }
 
-export function Setup({ loading, error, onCreateGame, onJoinGame }: SetupProps) {
+export function Setup({ loading, error, supabaseAvailable, onCreateGame, onJoinGame }: SetupProps) {
   const [tab, setTab] = useState<"create" | "join">(() => 
     typeof window !== "undefined" && new URLSearchParams(window.location.search).has("code") ? "join" : "create"
   );
@@ -64,8 +65,9 @@ export function Setup({ loading, error, onCreateGame, onJoinGame }: SetupProps) 
               New Game
             </button>
             <button
-              className={`setup-tab ${tab === "join" ? "active" : ""}`}
-              onClick={() => setTab("join")}
+              className={`setup-tab ${tab === "join" ? "active" : ""} ${!supabaseAvailable ? "disabled" : ""}`}
+              onClick={() => supabaseAvailable && setTab("join")}
+              aria-disabled={!supabaseAvailable}
             >
               Join Game
             </button>
@@ -110,23 +112,32 @@ export function Setup({ loading, error, onCreateGame, onJoinGame }: SetupProps) 
 
           {tab === "join" && (
             <>
-              <div className="join-input-wrap">
-                <input
-                  className="join-input"
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                  placeholder="FLIP-XXXXXX"
-                  maxLength={11}
-                  autoCapitalize="characters"
-                />
-              </div>
-              <button
-                className="btn-primary"
-                onClick={handleJoin}
-                disabled={joinCode.trim().length < 4}
-              >
-                Join Game
-              </button>
+              {!supabaseAvailable ? (
+                <div className="join-unavailable">
+                  <p>Shared games are temporarily unavailable.</p>
+                  <p className="join-unavailable-sub">The server may be paused. Try again later, or start a local game instead.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="join-input-wrap">
+                    <input
+                      className="join-input"
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                      placeholder="FLIP-XXXXXX"
+                      maxLength={11}
+                      autoCapitalize="characters"
+                    />
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={handleJoin}
+                    disabled={joinCode.trim().length < 4}
+                  >
+                    Join Game
+                  </button>
+                </>
+              )}
             </>
           )}
         </>

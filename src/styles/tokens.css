@@ -234,3 +234,18 @@ html, body, #root {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* Disabled Join Tab */
+.setup-tab.disabled { opacity: 0.45; cursor: not-allowed; background: var(--cream-dim); color: var(--text-dim); box-shadow: none; }
+.setup-tab.disabled:hover { transform: none; box-shadow: none; }
+
+/* Join Unavailable State */
+.join-unavailable { text-align: center; padding: 32px 16px; background: var(--cream); border: var(--border-thick); border-radius: var(--radius); box-shadow: var(--card-shadow); color: var(--navy); font-weight: 700; font-size: 16px; }
+.join-unavailable-sub { margin-top: 8px; font-size: 13px; font-weight: 500; color: var(--text-dim); }
+
+/* Share Prompt (local game) */
+.share-prompt { padding: 8px 16px; display: flex; }
+.btn-share-game { flex: 1; background: var(--yellow); border: var(--border-thick); border-radius: var(--radius); padding: 12px 16px; font-family: var(--font-heading); font-size: 16px; color: var(--navy); cursor: pointer; transition: all 0.2s; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: var(--card-shadow); }
+.btn-share-game:hover { transform: translate(-2px, -2px); box-shadow: var(--card-shadow-hover); }
+.btn-share-game:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--navy); }
+.btn-share-game:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }

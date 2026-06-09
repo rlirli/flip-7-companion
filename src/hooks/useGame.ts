@@ -1,14 +1,19 @@
 // src/hooks/useGame.ts
+// Orchestrator hook: wraps useLocalGame with optional Supabase sync.
+// All scorekeeping works offline by default.  Supabase is only touched when
+// the user explicitly shares or joins a multiplayer game.
+
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "../lib/supabase";
-import type { Game, Player, Round, Role } from "../types";
+import { useLocalGame } from "./useLocalGame";
+import { getSupabase, isSupabaseConfigured } from "../lib/supabase";
+import type { Game, Player, Role } from "../types";
 
-const uid = () => Math.random().toString(36).slice(2, 9);
-
-interface UseGameReturn {
+export interface UseGameReturn {
   game: Game | null;
   role: Role;
   isJoiner: boolean;
+  isShared: boolean;
+  supabaseAvailable: boolean;
   loading: boolean;
   error: string | null;
   localWip: Record<string, string>;
@@ -18,19 +23,22 @@ interface UseGameReturn {
   sortedPlayers: Player[];
   hasWip: boolean;
   // actions
-  createGame: (players: Player[]) => Promise<string | null>; // returns game code
+  createGame: (players: Player[]) => void;
   joinGame: (code: string) => Promise<boolean>;
+  shareGame: () => Promise<string | null>;
   setWip: (playerId: string, value: string) => void;
-  lockRound: () => Promise<void>;
+  lockRound: () => void;
   editRoundScore: (roundId: string, playerId: string, value: number) => void;
   leaveGame: () => void;
-  resetGame: () => Promise<void>;
+  resetGame: () => void;
 }
 
 export function useGame(): UseGameReturn {
-  const [game, setGame] = useState<Game | null>(null);
+  const local = useLocalGame();
+
   const [role, setRole] = useState<Role>("viewer");
   const [isJoiner, setIsJoiner] = useState(false);
+  const [isShared, setIsShared] = useState(false);
   const [loading, setLoading] = useState(() => {
     if (typeof window !== "undefined") {
       const code = new URLSearchParams(window.location.search).get("code");
@@ -39,15 +47,20 @@ export function useGame(): UseGameReturn {
     return false;
   });
   const [error, setError] = useState<string | null>(null);
-  
-  // Local WIP mirror
-  const [localWip, setLocalWip] = useState<Record<string, string>>({});
-  const wipDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Track when a field was last edited locally to prevent DB echoes from clobbering active typing
-  const lastEdited = useRef<Record<string, number>>({});
 
-  const gameRef = useRef(game);
-  useEffect(() => { gameRef.current = game; }, [game]);
+  // Refs for values used inside callbacks / timers
+  const isSharedRef = useRef(false);
+  useEffect(() => { isSharedRef.current = isShared; }, [isShared]);
+
+  // Track when a wip field was last edited locally (prevents realtime echoes
+  // from clobbering active typing)
+  const lastEdited = useRef<Record<string, number>>({});
+  const wipDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const roundsSyncDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const supabaseAvailable = isSupabaseConfigured();
+
+  // ── URL helpers ─────────────────────────────────────────────────
 
   const updateUrlCode = useCallback((code: string | null) => {
     const url = new URL(window.location.href);
@@ -59,35 +72,21 @@ export function useGame(): UseGameReturn {
     window.history.replaceState({}, "", url.toString());
   }, []);
 
-  // Derived values
-  const totalScores: Record<string, number> = {};
-  const wipTotals: Record<string, number> = {};
+  // ── Realtime subscription (only when shared) ───────────────────
 
-  if (game) {
-    for (const p of game.players) {
-      totalScores[p.id] = game.rounds.reduce(
-        (s, r) => s + (r.scores[p.id] ?? 0),
-        0
-      );
-      wipTotals[p.id] =
-        totalScores[p.id] + (parseInt(localWip[p.id] ?? "") || 0);
-    }
-  }
+  const gameId = local.game?.id;
 
-  const hasWip = Object.values(localWip).some(
-    (v) => v !== "" && v !== undefined
-  );
-  
-  const sortedPlayers = game
-    ? [...game.players].sort((a, b) => wipTotals[b.id] - wipTotals[a.id])
-    : [];
-
-  const gameId = game?.id;
-  // Subscribe to realtime updates for current game
   useEffect(() => {
-    if (!gameId) return;
+    if (!isShared || !gameId) return;
 
-    const channel = supabase
+    let sb;
+    try {
+      sb = getSupabase();
+    } catch {
+      return;
+    }
+
+    const channel = sb
       .channel(`game:${gameId}`)
       .on(
         "postgres_changes",
@@ -99,237 +98,308 @@ export function useGame(): UseGameReturn {
         },
         (payload) => {
           const updated = payload.new as Game;
-          setGame(updated);
-          
-          // Smart merge: Update localWip from the DB, EXCEPT for fields the user is actively typing.
-          // If the user typed in a field within the last 1500ms, we assume this DB update
-          // is either an echo of their own typing, or a conflicting edit that we should ignore
-          // for a moment so their cursor doesn't jump.
-          setLocalWip((prev) => {
-            const merged: Record<string, string> = { ...prev };
-            const now = Date.now();
-            for (const p of updated.players) {
-              const isActivelyEditing = now - (lastEdited.current[p.id] || 0) < 1500;
-              if (!isActivelyEditing) {
-                const remoteVal = updated.wip_scores?.[p.id];
-                merged[p.id] = remoteVal !== undefined && remoteVal !== null ? String(remoteVal) : "";
-              }
+          local.replaceGame(updated);
+
+          // Smart merge: don't overwrite fields the user is actively typing
+          const now = Date.now();
+          const prev = local.localWipRef.current;
+          const merged: Record<string, string> = { ...prev };
+          for (const p of updated.players) {
+            const isActivelyEditing =
+              now - (lastEdited.current[p.id] || 0) < 1500;
+            if (!isActivelyEditing) {
+              const remoteVal = updated.wip_scores?.[p.id];
+              merged[p.id] =
+                remoteVal !== undefined && remoteVal !== null
+                  ? String(remoteVal)
+                  : "";
             }
-            return merged;
-          });
+          }
+          local.replaceLocalWip(merged);
         }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      sb.removeChannel(channel);
     };
-  }, [gameId]);
+  }, [isShared, gameId, local]);
 
-  const createGame = useCallback(async (players: Player[]) => {
+  // ── DB sync helpers ─────────────────────────────────────────────
+
+  const pushWipToDb = useCallback(() => {
+    const g = local.gameRef.current;
+    if (!isSharedRef.current || !g) return;
+    try {
+      const sb = getSupabase();
+      const numericWip = Object.fromEntries(
+        Object.entries(local.localWipRef.current).map(([k, v]) => [
+          k,
+          parseInt(v) || 0,
+        ])
+      );
+      sb.from("games")
+        .update({ wip_scores: numericWip })
+        .eq("id", g.id)
+        .then();
+    } catch {
+      /* offline / snoozed — silently ignore */
+    }
+  }, [local]);
+
+  const pushRoundsToDb = useCallback(() => {
+    const g = local.gameRef.current;
+    if (!isSharedRef.current || !g) return;
+    try {
+      const sb = getSupabase();
+      sb.from("games")
+        .update({ rounds: g.rounds })
+        .eq("id", g.id)
+        .then();
+    } catch {
+      /* offline / snoozed */
+    }
+  }, [local]);
+
+  // ── Public actions ──────────────────────────────────────────────
+
+  const createGame = useCallback(
+    (players: Player[]) => {
+      setError(null);
+      local.createGame(players);
+      setRole("keeper");
+      setIsJoiner(false);
+      setIsShared(false);
+      lastEdited.current = {};
+      updateUrlCode(null);
+    },
+    [local, updateUrlCode]
+  );
+
+  const shareGame = useCallback(async (): Promise<string | null> => {
+    const g = local.gameRef.current;
+    if (!g) return null;
     setLoading(true);
     setError(null);
     try {
-      const { data, error: err } = await supabase
+      const sb = getSupabase();
+      const { data, error: err } = await sb
         .from("games")
-        .insert({ players, rounds: [], wip_scores: {}, code: "" })
+        .insert({
+          players: g.players,
+          rounds: g.rounds,
+          wip_scores: g.wip_scores,
+          code: "",
+        })
         .select()
         .single();
       if (err) throw err;
-      setGame(data as Game);
-      setRole("keeper");
-      setIsJoiner(false);
-      setLocalWip({});
-      lastEdited.current = {};
-      updateUrlCode((data as Game).code);
-      return (data as Game).code;
+
+      const shared = data as Game;
+      local.replaceGame(shared);
+      setIsShared(true);
+      updateUrlCode(shared.code!);
+      return shared.code!;
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to create game");
+      setError(
+        e instanceof Error ? e.message : "Failed to share game"
+      );
       return null;
     } finally {
       setLoading(false);
     }
-  }, [updateUrlCode]);
+  }, [local, updateUrlCode]);
 
-  const fetchGameFromDb = useCallback(async (code: string) => {
-    const { data, error: err } = await supabase
-      .from("games")
-      .select()
-      .eq("code", code.toUpperCase().trim())
-      .single();
-    if (err || !data) throw err ?? new Error("Game not found");
-    return data as Game;
-  }, []);
+  const joinGame = useCallback(
+    async (code: string): Promise<boolean> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const sb = getSupabase();
+        const { data, error: err } = await sb
+          .from("games")
+          .select()
+          .eq("code", code.toUpperCase().trim())
+          .single();
+        if (err || !data) throw err ?? new Error("Game not found");
 
-  const handleJoinSuccess = useCallback((joinedGame: Game) => {
-    setGame(joinedGame);
-    // We allow everyone who joins to be a keeper for now
-    // TODO: Viewer-only invites later on
-    setRole("keeper");
-    setIsJoiner(true);
-    setLocalWip(
-      Object.fromEntries(
-        Object.entries(joinedGame.wip_scores ?? {}).map(([k, v]) => [k, String(v)])
-      )
-    );
-    lastEdited.current = {};
-    updateUrlCode(joinedGame.code);
-  }, [updateUrlCode]);
+        const joinedGame = data as Game;
+        local.replaceGame(joinedGame);
+        local.replaceLocalWip(
+          Object.fromEntries(
+            Object.entries(joinedGame.wip_scores ?? {}).map(([k, v]) => [
+              k,
+              String(v),
+            ])
+          )
+        );
+        setRole("keeper");
+        setIsJoiner(true);
+        setIsShared(true);
+        lastEdited.current = {};
+        updateUrlCode(joinedGame.code!);
+        return true;
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Game not found");
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [local, updateUrlCode]
+  );
 
-  const joinGame = useCallback(async (code: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const joinedGame = await fetchGameFromDb(code);
-      handleJoinSuccess(joinedGame);
-      return true;
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Game not found");
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchGameFromDb, handleJoinSuccess]);
-
-  // Auto-join if URL has code
+  // Auto-join if URL has ?code=
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     if (!code) return;
 
     let ignore = false;
-    
     const autoJoin = async () => {
-      try {
-        const joinedGame = await fetchGameFromDb(code);
+      if (!isSupabaseConfigured()) {
         if (!ignore) {
-          handleJoinSuccess(joinedGame);
+          setError("Shared games are unavailable — the server may be paused.");
+          setLoading(false);
+          updateUrlCode(null);
+        }
+        return;
+      }
+
+      try {
+        const sb = getSupabase();
+        const { data, error: err } = await sb
+          .from("games")
+          .select()
+          .eq("code", code.toUpperCase().trim())
+          .single();
+        if (err || !data) throw err ?? new Error("Game not found");
+        if (!ignore) {
+          const joinedGame = data as Game;
+          local.replaceGame(joinedGame);
+          local.replaceLocalWip(
+            Object.fromEntries(
+              Object.entries(joinedGame.wip_scores ?? {}).map(([k, v]) => [
+                k,
+                String(v),
+              ])
+            )
+          );
+          setRole("keeper");
+          setIsJoiner(true);
+          setIsShared(true);
+          lastEdited.current = {};
+          updateUrlCode(joinedGame.code!);
         }
       } catch (e: unknown) {
         if (!ignore) {
           setError(e instanceof Error ? e.message : "Game not found");
+          updateUrlCode(null);
         }
       } finally {
-        if (!ignore) {
-          setLoading(false);
-        }
+        if (!ignore) setLoading(false);
       }
     };
 
     autoJoin();
-    return () => { ignore = true; };
-  }, [fetchGameFromDb, handleJoinSuccess]);
+    return () => {
+      ignore = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const pushWipToDb = useCallback(
-    async (wip: Record<string, string>) => {
-      if (!game) return;
-      const numericWip = Object.fromEntries(
-        Object.entries(wip).map(([k, v]) => [k, parseInt(v) || 0])
-      );
-      await supabase
-        .from("games")
-        .update({ wip_scores: numericWip })
-        .eq("id", game.id);
-    },
-    [game]
-  );
+  // ── Wrapped mutations (add DB sync when shared) ─────────────────
 
   const setWip = useCallback(
     (playerId: string, value: string) => {
       lastEdited.current[playerId] = Date.now();
-      setLocalWip((prev) => {
-        const next = { ...prev, [playerId]: value };
-        // Debounce DB write by 400ms so we don't hammer on every keystroke
+      local.setWip(playerId, value);
+
+      if (isSharedRef.current) {
         if (wipDebounce.current) clearTimeout(wipDebounce.current);
-        wipDebounce.current = setTimeout(() => pushWipToDb(next), 400);
-        return next;
-      });
+        wipDebounce.current = setTimeout(pushWipToDb, 400);
+      }
     },
-    [pushWipToDb]
+    [local, pushWipToDb]
   );
 
-  const lockRound = useCallback(async () => {
-    if (!game) return;
-    const scores: Record<string, number> = {};
-    for (const p of game.players) {
-      scores[p.id] = parseInt(localWip[p.id] ?? "") || 0;
-    }
-    const newRound: Round = { id: uid(), scores };
-    const updatedRounds = [...game.rounds, newRound];
-    await supabase
-      .from("games")
-      .update({ rounds: updatedRounds, wip_scores: {} })
-      .eq("id", game.id);
-    setLocalWip({});
+  const lockRound = useCallback(() => {
+    const patch = local.lockRound();
     lastEdited.current = {};
-  }, [game, localWip]);
 
-  const roundsDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRoundEdits = useRef<Record<string, Record<string, number>>>({});
+    if (patch && isSharedRef.current) {
+      const g = local.gameRef.current;
+      if (g) {
+        try {
+          const sb = getSupabase();
+          sb.from("games")
+            .update({ rounds: patch.rounds, wip_scores: patch.wip_scores })
+            .eq("id", g.id)
+            .then();
+        } catch {
+          /* offline */
+        }
+      }
+    }
+  }, [local]);
 
   const editRoundScore = useCallback(
     (roundId: string, playerId: string, value: number) => {
-      if (!pendingRoundEdits.current[roundId]) {
-        pendingRoundEdits.current[roundId] = {};
+      local.editRoundScore(roundId, playerId, value);
+
+      if (isSharedRef.current) {
+        if (roundsSyncDebounce.current)
+          clearTimeout(roundsSyncDebounce.current);
+        roundsSyncDebounce.current = setTimeout(pushRoundsToDb, 400);
       }
-      pendingRoundEdits.current[roundId][playerId] = value;
-      
-      if (roundsDebounce.current) clearTimeout(roundsDebounce.current);
-      roundsDebounce.current = setTimeout(() => {
-        const currentGame = gameRef.current;
-        if (!currentGame) return;
-        
-        const updatedRounds = currentGame.rounds.map((r) => {
-          const edits = pendingRoundEdits.current[r.id];
-          if (edits) {
-            return { ...r, scores: { ...r.scores, ...edits } };
-          }
-          return r;
-        });
-        
-        pendingRoundEdits.current = {};
-        
-        supabase
-          .from("games")
-          .update({ rounds: updatedRounds })
-          .eq("id", currentGame.id)
-          .then();
-      }, 400);
     },
-    []
+    [local, pushRoundsToDb]
   );
 
+  const resetGame = useCallback(() => {
+    const gameIdNow = local.gameRef.current?.id;
+    local.resetGame();
+    lastEdited.current = {};
+
+    if (isSharedRef.current && gameIdNow) {
+      try {
+        const sb = getSupabase();
+        sb.from("games")
+          .update({ rounds: [], wip_scores: {} })
+          .eq("id", gameIdNow)
+          .then();
+      } catch {
+        /* offline */
+      }
+    }
+  }, [local]);
+
   const leaveGame = useCallback(() => {
-    setGame(null);
+    local.leaveGame();
     setRole("viewer");
     setIsJoiner(false);
-    setLocalWip({});
+    setIsShared(false);
     lastEdited.current = {};
     setError(null);
     updateUrlCode(null);
-  }, [updateUrlCode]);
-
-  const resetGame = useCallback(async () => {
-    if (!game) return;
-    await supabase
-      .from("games")
-      .update({ rounds: [], wip_scores: {} })
-      .eq("id", game.id);
-  }, [game]);
+  }, [local, updateUrlCode]);
 
   return {
-    game,
+    game: local.game,
     role,
     isJoiner,
+    isShared,
+    supabaseAvailable,
     loading,
     error,
-    localWip,
-    totalScores,
-    wipTotals,
-    sortedPlayers,
-    hasWip,
+    localWip: local.localWip,
+    totalScores: local.totalScores,
+    wipTotals: local.wipTotals,
+    sortedPlayers: local.sortedPlayers,
+    hasWip: local.hasWip,
     createGame,
     joinGame,
+    shareGame,
     setWip,
     lockRound,
     editRoundScore,

@@ -11,12 +11,12 @@ export interface Round {
 
 export interface Game {
   id: string;
-  code: string;
+  code?: string;                              // only set once shared via Supabase
   players: Player[];
   rounds: Round[];
-  wip_scores: Record<string, number>; // playerId -> points (live, unlocked)
-  created_at: string;
-  updated_at: string;
+  wip_scores: Record<string, number>;         // playerId -> points (live, unlocked)
+  created_at?: string;                        // DB-only
+  updated_at?: string;                        // DB-only
 }
 
 export type ViewMode = "score" | "entry";

@@ -10,14 +10,15 @@ import type { ViewMode } from "./types";
 
 export default function App() {
   const {
-    game, role, isJoiner, loading, error, localWip,
+    game, role, isJoiner, isShared, supabaseAvailable, loading, error, localWip,
     totalScores, wipTotals, sortedPlayers, hasWip,
-    createGame, joinGame, setWip, lockRound, editRoundScore, leaveGame, resetGame,
+    createGame, joinGame, shareGame, setWip, lockRound, editRoundScore, leaveGame, resetGame,
   } = useGame();
 
   type ModalType = "leave" | "reset" | null;
   const [view, setView] = useState<ViewMode | null>(null);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [sharing, setSharing] = useState(false);
 
   // Default view: Joiners see standings first, Creators see entry first. 
   // Future viewers are locked to standings unless they change it (if permitted).
@@ -54,6 +55,12 @@ export default function App() {
     alert("Link copied to clipboard!");
   };
 
+  const handleShareGame = async () => {
+    setSharing(true);
+    await shareGame();
+    setSharing(false);
+  };
+
   return (
     <>
       <Header
@@ -70,6 +77,7 @@ export default function App() {
         <Setup
           loading={loading}
           error={error}
+          supabaseAvailable={supabaseAvailable}
           onCreateGame={createGame}
           onJoinGame={joinGame}
         />
@@ -77,8 +85,8 @@ export default function App() {
 
       {phase === "game" && game && (
         <>
-          {/* Share code banner */}
-          {role === "keeper" && (
+          {/* Share code banner — only for shared games */}
+          {isShared && game.code && (
             <div className="share-banner">
               <div className="share-info">
                 <span className="share-label">Share code</span>
@@ -101,6 +109,19 @@ export default function App() {
                   Share
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* Share prompt for local-only games */}
+          {!isShared && supabaseAvailable && role === "keeper" && (
+            <div className="share-prompt">
+              <button
+                className="btn-share-game"
+                onClick={handleShareGame}
+                disabled={sharing}
+              >
+                {sharing ? "Sharing…" : "📡 Share with friends"}
+              </button>
             </div>
           )}
 
